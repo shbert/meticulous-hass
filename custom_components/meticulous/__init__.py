@@ -11,7 +11,13 @@ from homeassistant.const import CONF_HOST, CONF_PORT
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
 
-from .const import CONF_ALLOW_DANGEROUS_ACTIONS, CONF_TOKEN, DOMAIN, PLATFORMS
+from .const import (
+    CONF_ALLOW_DANGEROUS_ACTION,
+    CONF_ALLOW_DANGEROUS_ACTIONS,
+    CONF_TOKEN,
+    DOMAIN,
+    PLATFORMS,
+)
 from .coordinator import MeticulousDataUpdateCoordinator, MeticulousError
 
 _LOGGER = logging.getLogger(__name__)
@@ -38,7 +44,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: MeticulousConfigEntry) -
     host = entry.data[CONF_HOST]
     port = entry.data[CONF_PORT]
     token = entry.data.get(CONF_TOKEN)
-    allow_dangerous_actions = entry.options.get(CONF_ALLOW_DANGEROUS_ACTIONS, False)
+    allow_dangerous_actions = bool(
+        entry.options.get(
+            CONF_ALLOW_DANGEROUS_ACTIONS,
+            entry.options.get(CONF_ALLOW_DANGEROUS_ACTION, False),
+        )
+    )
 
     coordinator = MeticulousDataUpdateCoordinator(
         hass,
@@ -54,6 +65,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: MeticulousConfigEntry) -
         raise ConfigEntryNotReady(f"Failed to initialize Meticulous API: {err}") from err
 
     entry.runtime_data = MeticulousRuntimeData(coordinator=coordinator)
+    entry.async_on_unload(entry.add_update_listener(async_reload_entry))
     hass.data[DOMAIN][entry.entry_id] = entry.runtime_data
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)

@@ -11,6 +11,7 @@ from homeassistant.const import CONF_HOST, CONF_PORT
 from homeassistant.data_entry_flow import FlowResult
 
 from .const import (
+    CONF_ALLOW_DANGEROUS_ACTION,
     CONF_ALLOW_DANGEROUS_ACTIONS,
     CONF_TOKEN,
     DEFAULT_PORT,
@@ -94,16 +95,27 @@ class MeticulousOptionsFlow(OptionsFlow):
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         """Manage Meticulous options."""
         if user_input is not None:
-            return self.async_create_entry(title="", data=user_input)
+            allow = bool(user_input.get(CONF_ALLOW_DANGEROUS_ACTIONS, False))
+            return self.async_create_entry(
+                title="",
+                data={
+                    CONF_ALLOW_DANGEROUS_ACTIONS: allow,
+                    # Backward-compatibility for previously used key variants.
+                    CONF_ALLOW_DANGEROUS_ACTION: allow,
+                },
+            )
 
+        current_allow = bool(
+            self._config_entry.options.get(
+                CONF_ALLOW_DANGEROUS_ACTIONS,
+                self._config_entry.options.get(CONF_ALLOW_DANGEROUS_ACTION, False),
+            )
+        )
         data_schema = vol.Schema(
             {
                 vol.Optional(
                     CONF_ALLOW_DANGEROUS_ACTIONS,
-                    default=self._config_entry.options.get(
-                        CONF_ALLOW_DANGEROUS_ACTIONS,
-                        False,
-                    ),
+                    default=current_allow,
                 ): bool
             }
         )
