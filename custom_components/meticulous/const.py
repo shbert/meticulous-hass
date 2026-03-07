@@ -8,7 +8,6 @@ DOMAIN = "meticulous"
 
 CONF_TOKEN = "token"
 CONF_ALLOW_DANGEROUS_ACTIONS = "allow_dangerous_actions"
-CONF_ALLOW_DANGEROUS_ACTION = "allow_dangerous_action"
 DEFAULT_PORT = 8080
 
 COORDINATOR_UPDATE_INTERVAL = timedelta(seconds=5)

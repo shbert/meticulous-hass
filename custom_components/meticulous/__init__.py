@@ -12,7 +12,6 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
 
 from .const import (
-    CONF_ALLOW_DANGEROUS_ACTION,
     CONF_ALLOW_DANGEROUS_ACTIONS,
     CONF_TOKEN,
     DOMAIN,
@@ -21,6 +20,7 @@ from .const import (
 from .coordinator import MeticulousDataUpdateCoordinator, MeticulousError
 
 _LOGGER = logging.getLogger(__name__)
+_LEGACY_ALLOW_DANGEROUS_ACTION_KEY = "allow_dangerous_action"
 
 
 @dataclass(slots=True)
@@ -47,7 +47,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: MeticulousConfigEntry) -
     allow_dangerous_actions = bool(
         entry.options.get(
             CONF_ALLOW_DANGEROUS_ACTIONS,
-            entry.options.get(CONF_ALLOW_DANGEROUS_ACTION, False),
+            entry.options.get(_LEGACY_ALLOW_DANGEROUS_ACTION_KEY, False),
         )
     )
 
