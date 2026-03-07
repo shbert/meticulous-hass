@@ -117,6 +117,23 @@ target weight | number
 
 ---
 
+# Profile Handling
+
+Integration must support profile handling using `pyMeticulous` profile APIs:
+
+- show available profiles
+- show currently active profile
+- load/select a profile from Home Assistant
+
+Scope constraints:
+
+- creating new profiles is out of scope
+- saving profile edits is out of scope
+
+If profile execution controls are added (start brewing from a profile), treat them as dangerous actions and enforce dangerous-action safety guards.
+
+---
+
 # Home Assistant Integration
 
 Integration must support:

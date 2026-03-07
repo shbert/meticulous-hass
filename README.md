@@ -40,6 +40,10 @@ Custom integration for Home Assistant to connect to a Meticulous espresso machin
 
 - Auto Purge
 
+### Selects
+
+- Profile (list and load machine profiles)
+
 ## Requirements
 
 - Home Assistant `2024.12+`
@@ -70,6 +74,7 @@ The integration uses a UI config flow and supports reload from Home Assistant.
   1. Enable dangerous actions in integration options.
   2. Use `Arm Dangerous Actions`.
   3. Execute the dangerous action within 30 seconds.
+- Profile creation and profile-save editing are not exposed in this integration.
 
 ## Notes
 
