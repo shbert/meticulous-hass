@@ -42,19 +42,17 @@ Custom integration for Home Assistant to connect to a Meticulous espresso machin
 - Python `3.12+` (Home Assistant runtime)
 - Network access from Home Assistant to the Meticulous machine
 
-## Installation (Manual, Home Assistant Style)
+## Installation (HACS)
 
-1. Locate your Home Assistant config directory (the folder that contains `configuration.yaml`).
-2. Create this path if it does not exist:
-   - `custom_components/meticulous/`
-3. Copy this repository's `custom_components/meticulous` folder into your Home Assistant config directory under `custom_components/`.
-4. Restart Home Assistant.
-5. Go to `Settings` -> `Devices & Services` -> `Add Integration`.
-6. Search for `Meticulous`.
-7. Enter:
-   - `host`
-   - `port` (default: `8080`)
-   - `token` (optional)
+1. Ensure HACS is installed in Home Assistant.
+2. In Home Assistant, open `HACS` -> `Integrations`.
+3. Open the menu (top right) -> `Custom repositories`.
+4. Add this repository URL and set category to `Integration`.
+5. Search for `Meticulous` in HACS and install it.
+6. Restart Home Assistant.
+7. Go to `Settings` -> `Devices & Services` -> `Add Integration`.
+8. Search for `Meticulous`.
+9. Enter `host`, `port` (default `8080`), and optional `token`.
 
 ## Configuration
 
