@@ -106,6 +106,7 @@ class MeticulousDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         options = ApiOptions(
             onStatus=self._handle_status_event,
             onSensors=self._handle_sensors_event,
+            throttle={"status": 0.25, "sensors": 0.25},
         )
         client = Api(base_url=f"http://{self._host}:{self._port}", options=options)
 
