@@ -14,9 +14,16 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 
 from meticulous import APIError, Api
 from meticulous.api import ApiOptions
-from meticulous.api_types import ActionType, SensorsEvent, StatusData
+from meticulous.api_types import (
+    ActionType,
+    PartialSettings,
+    SensorsEvent,
+    Settings,
+    StatusData,
+)
 
 from .const import (
+    ATTR_AUTO_PURGE,
     ATTR_BREW_STATE,
     ATTR_FLOW_RATE,
     ATTR_MOTOR_LOAD,
@@ -73,6 +80,7 @@ class MeticulousDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._telemetry: dict[str, Any] = {}
         self._telemetry_lock = Lock()
         self._last_event_at: datetime | None = None
+        self._last_settings_refresh_at: datetime | None = None
 
     def _build_client(self) -> Api:
         """Build the API client."""
@@ -117,7 +125,9 @@ class MeticulousDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if isinstance(device_info, APIError):
             if device_info.status in {"401", "403"}:
                 raise MeticulousAuthError(device_info.error or "Authentication failed")
-            raise MeticulousConnectionError(device_info.error or "Unable to reach machine")
+            raise MeticulousConnectionError(
+                device_info.error or "Unable to reach machine"
+            )
 
     async def _async_setup(self) -> None:
         """Set up coordinator resources."""
@@ -148,7 +158,33 @@ class MeticulousDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if age > timedelta(seconds=30):
             raise UpdateFailed("No telemetry received from Meticulous socket stream")
 
+        if self._last_settings_refresh_at is None or (
+            datetime.now(tz=UTC) - self._last_settings_refresh_at
+        ) > timedelta(seconds=60):
+            try:
+                auto_purge = await self.hass.async_add_executor_job(
+                    self._sync_get_auto_purge
+                )
+            except Exception as err:  # pragma: no cover - external api errors
+                _LOGGER.debug("Unable to refresh auto purge setting: %s", err)
+            else:
+                telemetry[ATTR_AUTO_PURGE] = auto_purge
+                self._last_settings_refresh_at = datetime.now(tz=UTC)
+
         return telemetry
+
+    def _sync_get_auto_purge(self) -> bool:
+        """Fetch auto purge setting from machine settings."""
+        assert self.client is not None
+        settings = self.client.get_settings()
+        if isinstance(settings, APIError):
+            raise MeticulousError(settings.error or "Unable to fetch settings")
+        return self._settings_auto_purge(settings)
+
+    @staticmethod
+    def _settings_auto_purge(settings: Settings) -> bool:
+        """Extract auto purge from settings payload."""
+        return bool(settings.auto_purge_after_shot)
 
     def _sync_execute_action(self, action: ActionType) -> None:
         """Execute an action through the HTTP API."""
@@ -175,6 +211,26 @@ class MeticulousDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         await self.hass.async_add_executor_job(
             partial(self._sync_execute_action, action_type)
         )
+
+    def _sync_set_auto_purge(self, enabled: bool) -> bool:
+        """Set auto purge switch state."""
+        assert self.client is not None
+        payload = PartialSettings(auto_purge_after_shot=enabled)
+        result = self.client.update_setting(payload)
+
+        if isinstance(result, APIError):
+            raise MeticulousError(result.error or "Failed updating auto purge setting")
+
+        return self._settings_auto_purge(result)
+
+    async def async_set_auto_purge(self, enabled: bool) -> None:
+        """Set auto purge on the machine and update coordinator cache."""
+        value = await self.hass.async_add_executor_job(
+            partial(self._sync_set_auto_purge, enabled)
+        )
+        with self._telemetry_lock:
+            self._telemetry[ATTR_AUTO_PURGE] = value
+        self._last_settings_refresh_at = datetime.now(tz=UTC)
 
     async def async_disconnect(self) -> None:
         """Disconnect socket client."""
