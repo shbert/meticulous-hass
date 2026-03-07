@@ -11,7 +11,7 @@ from homeassistant.const import CONF_HOST, CONF_PORT
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
 
-from .const import CONF_TOKEN, DOMAIN, PLATFORMS
+from .const import CONF_ALLOW_DANGEROUS_ACTIONS, CONF_TOKEN, DOMAIN, PLATFORMS
 from .coordinator import MeticulousDataUpdateCoordinator, MeticulousError
 
 _LOGGER = logging.getLogger(__name__)
@@ -38,8 +38,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: MeticulousConfigEntry) -
     host = entry.data[CONF_HOST]
     port = entry.data[CONF_PORT]
     token = entry.data.get(CONF_TOKEN)
+    allow_dangerous_actions = entry.options.get(CONF_ALLOW_DANGEROUS_ACTIONS, False)
 
-    coordinator = MeticulousDataUpdateCoordinator(hass, host=host, port=port, token=token)
+    coordinator = MeticulousDataUpdateCoordinator(
+        hass,
+        host=host,
+        port=port,
+        token=token,
+        allow_dangerous_actions=allow_dangerous_actions,
+    )
 
     try:
         await coordinator.async_config_entry_first_refresh()

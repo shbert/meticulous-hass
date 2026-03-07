@@ -5,7 +5,7 @@ from __future__ import annotations
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.helpers.entity import DeviceInfo, EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -33,6 +33,8 @@ class MeticulousAutoPurgeSwitch(
 
     _attr_has_entity_name = True
     _attr_name = "Auto Purge"
+    _attr_entity_category = EntityCategory.CONFIG
+    _attr_entity_registry_enabled_default = False
 
     def __init__(
         self,

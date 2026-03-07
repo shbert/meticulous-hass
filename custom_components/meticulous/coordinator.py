@@ -49,6 +49,7 @@ from .const import (
     ATTR_TEMPERATURE,
     ATTR_WATER_TEMP,
     COORDINATOR_UPDATE_INTERVAL,
+    DANGEROUS_ACTION_ARM_TIMEOUT_SECONDS,
     DOMAIN,
 )
 
@@ -71,6 +72,10 @@ class MeticulousConnectionError(MeticulousError):
     """Raised when connection fails."""
 
 
+class MeticulousDangerousActionError(MeticulousError):
+    """Raised when a dangerous action is blocked by safety guards."""
+
+
 class MeticulousDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     """Class to manage fetching Meticulous data."""
 
@@ -81,6 +86,7 @@ class MeticulousDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         host: str,
         port: int,
         token: str | None,
+        allow_dangerous_actions: bool,
     ) -> None:
         """Initialize the coordinator."""
         super().__init__(
@@ -92,6 +98,7 @@ class MeticulousDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._host = host
         self._port = port
         self._token = token
+        self._allow_dangerous_actions = allow_dangerous_actions
 
         self.client: Api | None = None
         self._telemetry: dict[str, Any] = {}
@@ -100,6 +107,7 @@ class MeticulousDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._last_settings_refresh_at: datetime | None = None
         self._last_device_info_refresh_at: datetime | None = None
         self._last_stats_refresh_at: datetime | None = None
+        self._armed_until: datetime | None = None
 
     def _build_client(self) -> Api:
         """Build the API client."""
@@ -315,6 +323,60 @@ class MeticulousDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if isinstance(result, APIError):
             raise MeticulousError(result.error or f"Action {action.value} failed")
 
+    def _log_dangerous_action_attempt(
+        self,
+        *,
+        action: str,
+        allowed: bool,
+        reason: str,
+    ) -> None:
+        """Log dangerous action attempts in a visible way."""
+        if allowed:
+            _LOGGER.warning("Dangerous action allowed: %s (%s)", action, reason)
+            return
+        _LOGGER.warning("Dangerous action blocked: %s (%s)", action, reason)
+
+    def _ensure_dangerous_action_allowed(self, action: str) -> None:
+        """Guard dangerous actions with opt-in and arming checks."""
+        now = datetime.now(tz=UTC)
+
+        if not self._allow_dangerous_actions:
+            self._log_dangerous_action_attempt(
+                action=action,
+                allowed=False,
+                reason="dangerous actions are disabled in integration options",
+            )
+            raise MeticulousDangerousActionError(
+                "Dangerous actions are disabled. Enable them in integration options."
+            )
+
+        if self._armed_until is None or now > self._armed_until:
+            self._log_dangerous_action_attempt(
+                action=action,
+                allowed=False,
+                reason="arming required before execution",
+            )
+            raise MeticulousDangerousActionError(
+                "Action requires arming. Press 'Arm Dangerous Actions' and retry within 30s."
+            )
+
+        self._armed_until = None
+        self._log_dangerous_action_attempt(
+            action=action,
+            allowed=True,
+            reason="arming token accepted",
+        )
+
+    async def async_arm_dangerous_actions(self) -> None:
+        """Arm dangerous actions for a short time window."""
+        self._armed_until = datetime.now(tz=UTC) + timedelta(
+            seconds=DANGEROUS_ACTION_ARM_TIMEOUT_SECONDS
+        )
+        _LOGGER.warning(
+            "Dangerous actions armed for %s seconds",
+            DANGEROUS_ACTION_ARM_TIMEOUT_SECONDS,
+        )
+
     async def async_execute_action(self, action: str) -> None:
         """Execute an action on the machine."""
         if self.client is None:
@@ -329,6 +391,9 @@ class MeticulousDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         action_type = action_map.get(action)
         if action_type is None:
             raise MeticulousError(f"Unsupported Meticulous action: {action}")
+
+        if action == "start_brew":
+            self._ensure_dangerous_action_allowed(action)
 
         await self.hass.async_add_executor_job(
             partial(self._sync_execute_action, action_type)
@@ -347,6 +412,7 @@ class MeticulousDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def async_set_auto_purge(self, enabled: bool) -> None:
         """Set auto purge on the machine and update coordinator cache."""
+        self._ensure_dangerous_action_allowed("auto_purge")
         value = await self.hass.async_add_executor_job(
             partial(self._sync_set_auto_purge, enabled)
         )

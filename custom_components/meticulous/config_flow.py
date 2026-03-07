@@ -6,11 +6,16 @@ from typing import Any
 
 import voluptuous as vol
 
-from homeassistant.config_entries import ConfigFlow
+from homeassistant.config_entries import ConfigFlow, OptionsFlow
 from homeassistant.const import CONF_HOST, CONF_PORT
 from homeassistant.data_entry_flow import FlowResult
 
-from .const import CONF_TOKEN, DEFAULT_PORT, DOMAIN
+from .const import (
+    CONF_ALLOW_DANGEROUS_ACTIONS,
+    CONF_TOKEN,
+    DEFAULT_PORT,
+    DOMAIN,
+)
 from .coordinator import (
     MeticulousAuthError,
     MeticulousConnectionError,
@@ -23,6 +28,11 @@ class MeticulousConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Meticulous."""
 
     VERSION = 1
+
+    @staticmethod
+    def async_get_options_flow(config_entry) -> OptionsFlow:
+        """Get the options flow for this handler."""
+        return MeticulousOptionsFlow(config_entry)
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         """Handle the initial step."""
@@ -72,3 +82,26 @@ class MeticulousConfigFlow(ConfigFlow, domain=DOMAIN):
             data_schema=data_schema,
             errors=errors,
         )
+
+
+class MeticulousOptionsFlow(OptionsFlow):
+    """Handle Meticulous options."""
+
+    async def async_step_init(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+        """Manage Meticulous options."""
+        if user_input is not None:
+            return self.async_create_entry(title="", data=user_input)
+
+        data_schema = vol.Schema(
+            {
+                vol.Optional(
+                    CONF_ALLOW_DANGEROUS_ACTIONS,
+                    default=self.config_entry.options.get(
+                        CONF_ALLOW_DANGEROUS_ACTIONS,
+                        False,
+                    ),
+                ): bool
+            }
+        )
+
+        return self.async_show_form(step_id="init", data_schema=data_schema)

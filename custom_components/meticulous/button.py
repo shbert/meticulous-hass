@@ -8,7 +8,7 @@ from typing import Final
 from homeassistant.components.button import ButtonEntity, ButtonEntityDescription
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.helpers.entity import DeviceInfo, EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -22,13 +22,24 @@ class MeticulousButtonEntityDescription(ButtonEntityDescription):
     """Describes Meticulous button entity."""
 
     action: str
+    dangerous: bool = False
+    arms_dangerous_actions: bool = False
 
 
 BUTTONS: Final[tuple[MeticulousButtonEntityDescription, ...]] = (
     MeticulousButtonEntityDescription(
+        key="arm_dangerous_actions",
+        name="Arm Dangerous Actions",
+        action="arm_dangerous_actions",
+        arms_dangerous_actions=True,
+        entity_category=EntityCategory.CONFIG,
+    ),
+    MeticulousButtonEntityDescription(
         key="start_brew",
         name="Start Brew",
         action="start_brew",
+        dangerous=True,
+        entity_category=EntityCategory.CONFIG,
     ),
     MeticulousButtonEntityDescription(
         key="abort_brew",
@@ -74,6 +85,7 @@ class MeticulousButton(CoordinatorEntity[MeticulousDataUpdateCoordinator], Butto
         self.entity_description = description
         self._attr_unique_id = f"{entry.entry_id}_{description.key}"
         self._attr_has_entity_name = True
+        self._attr_entity_registry_enabled_default = not description.dangerous
 
         host = entry.data["host"]
         self._attr_device_info = DeviceInfo(
@@ -85,5 +97,9 @@ class MeticulousButton(CoordinatorEntity[MeticulousDataUpdateCoordinator], Butto
 
     async def async_press(self) -> None:
         """Press the button."""
+        if self.entity_description.arms_dangerous_actions:
+            await self.coordinator.async_arm_dangerous_actions()
+            return
+
         await self.coordinator.async_execute_action(self.entity_description.action)
         await self.coordinator.async_request_refresh()

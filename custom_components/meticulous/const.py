@@ -7,6 +7,7 @@ from datetime import timedelta
 DOMAIN = "meticulous"
 
 CONF_TOKEN = "token"
+CONF_ALLOW_DANGEROUS_ACTIONS = "allow_dangerous_actions"
 DEFAULT_PORT = 8080
 
 COORDINATOR_UPDATE_INTERVAL = timedelta(seconds=5)
@@ -38,3 +39,5 @@ ATTR_DEVICE_REPOSITORY_INFO = "device_repository_info"
 
 ATTR_STATS_TOTAL_SAVED_SHOTS = "stats_total_saved_shots"
 ATTR_STATS_BY_PROFILE = "stats_by_profile"
+
+DANGEROUS_ACTION_ARM_TIMEOUT_SECONDS = 30
