@@ -141,3 +141,4 @@ Integration appears in Home Assistant UI and provides:
 - brew start button
 - purge button
 - sensors updating every 5 seconds
+- proper updated Readme.md in HomeAssistant style with installation instructions and basic documentation of this integration
