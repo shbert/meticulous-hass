@@ -4,8 +4,10 @@
   "codeowners": ["@smartbert"],
   "config_flow": true,
   "documentation": "https://github.com/smartbert/meticulous-hass",
+  "integration_type": "hub",
   "iot_class": "local_polling",
   "loggers": ["meticulous", "pymeticulous"],
   "requirements": ["pymeticulous==0.3.1"],
-  "version": "0.1.0"
+  "homeassistant": "2024.12.0",
+  "version": "0.1.1"
 }
