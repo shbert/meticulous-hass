@@ -6,7 +6,7 @@ from typing import Any
 
 import voluptuous as vol
 
-from homeassistant.config_entries import ConfigFlow, OptionsFlow
+from homeassistant.config_entries import ConfigEntry, ConfigFlow, OptionsFlow
 from homeassistant.const import CONF_HOST, CONF_PORT
 from homeassistant.data_entry_flow import FlowResult
 
@@ -87,6 +87,10 @@ class MeticulousConfigFlow(ConfigFlow, domain=DOMAIN):
 class MeticulousOptionsFlow(OptionsFlow):
     """Handle Meticulous options."""
 
+    def __init__(self, config_entry: ConfigEntry) -> None:
+        """Initialize options flow."""
+        self._config_entry = config_entry
+
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         """Manage Meticulous options."""
         if user_input is not None:
@@ -96,7 +100,7 @@ class MeticulousOptionsFlow(OptionsFlow):
             {
                 vol.Optional(
                     CONF_ALLOW_DANGEROUS_ACTIONS,
-                    default=self.config_entry.options.get(
+                    default=self._config_entry.options.get(
                         CONF_ALLOW_DANGEROUS_ACTIONS,
                         False,
                     ),
