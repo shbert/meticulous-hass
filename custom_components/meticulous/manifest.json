@@ -1,0 +1,11 @@
+{
+  "domain": "meticulous",
+  "name": "Meticulous",
+  "codeowners": ["@smartbert"],
+  "config_flow": true,
+  "documentation": "https://github.com/smartbert/meticulous-hass",
+  "iot_class": "local_polling",
+  "loggers": ["meticulous", "pymeticulous"],
+  "requirements": ["pyMeticulous"],
+  "version": "0.1.0"
+}
