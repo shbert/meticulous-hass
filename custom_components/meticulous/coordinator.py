@@ -96,25 +96,45 @@ class MeticulousDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         return client
 
-    def _handle_status_event(self, status: StatusData) -> None:
+    def _handle_status_event(self, status: StatusData | dict[str, Any]) -> None:
         """Handle status event from socket stream."""
+        try:
+            status_event = (
+                status
+                if isinstance(status, StatusData)
+                else StatusData.model_validate(status)
+            )
+        except Exception as err:  # pragma: no cover - depends on upstream payloads
+            _LOGGER.debug("Unable to parse status event payload: %s", err)
+            return
+
         with self._telemetry_lock:
             self._telemetry.update(
                 {
-                    ATTR_PRESSURE: status.sensors.p,
-                    ATTR_FLOW_RATE: status.sensors.f,
-                    ATTR_SCALE_WEIGHT: status.sensors.w,
-                    ATTR_TEMPERATURE: status.sensors.t,
-                    ATTR_WATER_TEMP: status.sensors.t,
-                    ATTR_BREW_STATE: status.extracting,
+                    ATTR_PRESSURE: status_event.sensors.p,
+                    ATTR_FLOW_RATE: status_event.sensors.f,
+                    ATTR_SCALE_WEIGHT: status_event.sensors.w,
+                    ATTR_TEMPERATURE: status_event.sensors.t,
+                    ATTR_WATER_TEMP: status_event.sensors.t,
+                    ATTR_BREW_STATE: status_event.extracting,
                 }
             )
             self._last_event_at = datetime.now(tz=UTC)
 
-    def _handle_sensors_event(self, sensors: SensorsEvent) -> None:
+    def _handle_sensors_event(self, sensors: SensorsEvent | dict[str, Any]) -> None:
         """Handle sensors event from socket stream."""
+        try:
+            sensor_event = (
+                sensors
+                if isinstance(sensors, SensorsEvent)
+                else SensorsEvent.model_validate(sensors)
+            )
+        except Exception as err:  # pragma: no cover - depends on upstream payloads
+            _LOGGER.debug("Unable to parse sensors event payload: %s", err)
+            return
+
         with self._telemetry_lock:
-            self._telemetry[ATTR_MOTOR_LOAD] = sensors.m_pwr
+            self._telemetry[ATTR_MOTOR_LOAD] = sensor_event.m_pwr
             self._last_event_at = datetime.now(tz=UTC)
 
     def _sync_connect_and_validate(self, client: Api) -> None:
