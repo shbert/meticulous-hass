@@ -95,7 +95,7 @@ purge | button
 
 # Safety for Dangerous Actions
 
-Treat `start brew` and `auto purge` as dangerous actions.
+Treat `start brew`, `auto purge`, and `profile selection/load` as dangerous actions.
 
 Safety requirements:
 
@@ -130,7 +130,7 @@ Scope constraints:
 - creating new profiles is out of scope
 - saving profile edits is out of scope
 
-If profile execution controls are added (start brewing from a profile), treat them as dangerous actions and enforce dangerous-action safety guards.
+Profile loading/selection must be guarded as dangerous until firmware behavior is verified.
 
 ---
 
