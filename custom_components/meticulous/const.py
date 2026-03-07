@@ -12,7 +12,7 @@ DEFAULT_PORT = 8080
 
 COORDINATOR_UPDATE_INTERVAL = timedelta(seconds=5)
 
-PLATFORMS: list[str] = ["sensor", "binary_sensor", "button", "switch"]
+PLATFORMS: list[str] = ["sensor", "binary_sensor", "button", "switch", "select"]
 
 ATTR_TEMPERATURE = "temperature"
 ATTR_PRESSURE = "pressure"
@@ -22,6 +22,8 @@ ATTR_MOTOR_LOAD = "motor_load"
 ATTR_BREW_STATE = "brew_state"
 ATTR_WATER_TEMP = "water_temp"
 ATTR_AUTO_PURGE = "auto_purge"
+ATTR_ACTIVE_PROFILE = "active_profile"
+ATTR_AVAILABLE_PROFILES = "available_profiles"
 
 ATTR_DEVICE_NAME = "device_name"
 ATTR_DEVICE_HOSTNAME = "device_hostname"

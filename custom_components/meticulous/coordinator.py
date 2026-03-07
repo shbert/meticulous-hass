@@ -18,6 +18,7 @@ from meticulous.api_types import (
     ActionType,
     DeviceInfo,
     HistoryStats,
+    PartialProfile,
     PartialSettings,
     SensorsEvent,
     Settings,
@@ -25,7 +26,9 @@ from meticulous.api_types import (
 )
 
 from .const import (
+    ATTR_ACTIVE_PROFILE,
     ATTR_AUTO_PURGE,
+    ATTR_AVAILABLE_PROFILES,
     ATTR_BREW_STATE,
     ATTR_DEVICE_BATCH_NUMBER,
     ATTR_DEVICE_BUILD_DATE,
@@ -108,6 +111,8 @@ class MeticulousDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._last_device_info_refresh_at: datetime | None = None
         self._last_stats_refresh_at: datetime | None = None
         self._armed_until: datetime | None = None
+        self._profiles_by_option: dict[str, str] = {}
+        self._last_profile_refresh_at: datetime | None = None
 
     def _build_client(self) -> Api:
         """Build the API client."""
@@ -145,6 +150,7 @@ class MeticulousDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     ATTR_TEMPERATURE: status_event.sensors.t,
                     ATTR_WATER_TEMP: status_event.sensors.t,
                     ATTR_BREW_STATE: status_event.extracting,
+                    ATTR_ACTIVE_PROFILE: status_event.profile,
                 }
             )
             self._last_event_at = datetime.now(tz=UTC)
@@ -199,12 +205,10 @@ class MeticulousDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             telemetry = dict(self._telemetry)
             last_event_at = self._last_event_at
 
-        if last_event_at is None:
-            return telemetry
-
-        age = datetime.now(tz=UTC) - last_event_at
-        if age > timedelta(seconds=30):
-            raise UpdateFailed("No telemetry received from Meticulous socket stream")
+        if last_event_at is not None:
+            age = datetime.now(tz=UTC) - last_event_at
+            if age > timedelta(seconds=30):
+                raise UpdateFailed("No telemetry received from Meticulous socket stream")
 
         if self._last_settings_refresh_at is None or (
             datetime.now(tz=UTC) - self._last_settings_refresh_at
@@ -245,6 +249,19 @@ class MeticulousDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             else:
                 telemetry.update(history_stats_payload)
                 self._last_stats_refresh_at = now
+
+        if self._last_profile_refresh_at is None or (
+            now - self._last_profile_refresh_at
+        ) > timedelta(minutes=5):
+            try:
+                profiles_payload = await self.hass.async_add_executor_job(
+                    self._sync_get_profiles_payload
+                )
+            except Exception as err:  # pragma: no cover - external api errors
+                _LOGGER.debug("Unable to refresh profiles: %s", err)
+            else:
+                telemetry.update(profiles_payload)
+                self._last_profile_refresh_at = now
 
         with self._telemetry_lock:
             self._telemetry.update(telemetry)
@@ -310,6 +327,50 @@ class MeticulousDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if isinstance(settings, APIError):
             raise MeticulousError(settings.error or "Unable to fetch settings")
         return self._settings_auto_purge(settings)
+
+    @staticmethod
+    def _profile_option(profile: PartialProfile) -> str:
+        """Build display option label for a profile."""
+        if profile.id:
+            return f"{profile.name} ({profile.id[:8]})"
+        return profile.name
+
+    def _sync_get_profiles_payload(self) -> dict[str, Any]:
+        """Fetch available profiles from the machine."""
+        assert self.client is not None
+        profiles = self.client.list_profiles()
+        if isinstance(profiles, APIError):
+            raise MeticulousError(profiles.error or "Unable to fetch profiles")
+
+        profile_map: dict[str, str] = {}
+        for profile in profiles:
+            if not profile.id or not profile.name:
+                continue
+            profile_map[self._profile_option(profile)] = profile.id
+
+        self._profiles_by_option = profile_map
+        return {ATTR_AVAILABLE_PROFILES: list(profile_map.keys())}
+
+    def _sync_load_profile(self, profile_id: str) -> PartialProfile:
+        """Load profile by ID on the machine."""
+        assert self.client is not None
+        loaded = self.client.load_profile_by_id(profile_id)
+        if isinstance(loaded, APIError):
+            raise MeticulousError(loaded.error or "Unable to load profile")
+        return loaded
+
+    async def async_load_profile_by_option(self, option: str) -> None:
+        """Load profile selected in HA by display option."""
+        profile_id = self._profiles_by_option.get(option)
+        if profile_id is None:
+            raise MeticulousError(f"Unknown profile option: {option}")
+
+        loaded = await self.hass.async_add_executor_job(
+            partial(self._sync_load_profile, profile_id)
+        )
+
+        with self._telemetry_lock:
+            self._telemetry[ATTR_ACTIVE_PROFILE] = loaded.name
 
     @staticmethod
     def _settings_auto_purge(settings: Settings) -> bool:

@@ -20,6 +20,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import MeticulousConfigEntry
 from .const import (
+    ATTR_ACTIVE_PROFILE,
     ATTR_DEVICE_BATCH_NUMBER,
     ATTR_DEVICE_BUILD_DATE,
     ATTR_DEVICE_FIRMWARE,
@@ -62,6 +63,11 @@ class MeticulousInfoSensorDescription(SensorEntityDescription):
 
 
 SENSORS: Final[tuple[MeticulousSensorEntityDescription, ...]] = (
+    MeticulousSensorEntityDescription(
+        key="active_profile",
+        name="Active Profile",
+        telemetry_key=ATTR_ACTIVE_PROFILE,
+    ),
     MeticulousSensorEntityDescription(
         key="temperature",
         name="Machine Temperature",
