@@ -2,6 +2,9 @@
 
 Custom integration for Home Assistant to connect to a Meticulous espresso machine using `pymeticulous`.
 
+> [!WARNING]
+> This integration is currently **untested** and **not yet finished**. Use it as a work in progress.
+
 ## Features
 
 - Local API connection to a Meticulous machine
