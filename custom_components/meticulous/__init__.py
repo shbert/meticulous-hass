@@ -12,7 +12,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
 
 from .const import CONF_TOKEN, DOMAIN, PLATFORMS
-from .coordinator import MeticulousDataUpdateCoordinator, MeticulousSetupError
+from .coordinator import MeticulousDataUpdateCoordinator, MeticulousError
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -43,7 +43,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: MeticulousConfigEntry) -
 
     try:
         await coordinator.async_config_entry_first_refresh()
-    except MeticulousSetupError as err:
+    except MeticulousError as err:
         raise ConfigEntryNotReady(f"Failed to initialize Meticulous API: {err}") from err
 
     entry.runtime_data = MeticulousRuntimeData(coordinator=coordinator)
@@ -56,6 +56,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: MeticulousConfigEntry) -
 
 async def async_unload_entry(hass: HomeAssistant, entry: MeticulousConfigEntry) -> bool:
     """Unload a config entry."""
+    await entry.runtime_data.coordinator.async_disconnect()
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok:
         hass.data[DOMAIN].pop(entry.entry_id, None)

@@ -7,7 +7,7 @@ from datetime import timedelta
 DOMAIN = "meticulous"
 
 CONF_TOKEN = "token"
-DEFAULT_PORT = 80
+DEFAULT_PORT = 8080
 
 COORDINATOR_UPDATE_INTERVAL = timedelta(seconds=5)
 

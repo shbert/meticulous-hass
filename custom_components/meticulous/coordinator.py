@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from datetime import UTC, datetime, timedelta
 from functools import partial
-import importlib
-import inspect
 import logging
+from threading import Lock
 from typing import Any
 
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+
+from meticulous import APIError, Api
+from meticulous.api import ApiOptions
+from meticulous.api_types import ActionType, SensorsEvent, StatusData
 
 from .const import (
     ATTR_BREW_STATE,
@@ -44,141 +47,6 @@ class MeticulousConnectionError(MeticulousError):
     """Raised when connection fails."""
 
 
-def _mapping_from_state(state: Any) -> dict[str, Any]:
-    """Normalize upstream telemetry object into a dictionary."""
-    if isinstance(state, Mapping):
-        return dict(state)
-
-    output: dict[str, Any] = {}
-    for key in (
-        ATTR_TEMPERATURE,
-        ATTR_PRESSURE,
-        ATTR_FLOW_RATE,
-        ATTR_SCALE_WEIGHT,
-        ATTR_MOTOR_LOAD,
-        ATTR_BREW_STATE,
-        ATTR_WATER_TEMP,
-    ):
-        if hasattr(state, key):
-            output[key] = getattr(state, key)
-    return output
-
-
-def _call_with_supported_parameters(
-    func: Callable[..., Any],
-    *,
-    host: str,
-    port: int,
-    token: str | None,
-) -> Any:
-    """Invoke a constructor with only supported kwargs."""
-    kwargs: dict[str, Any] = {}
-    signature = inspect.signature(func)
-
-    if "host" in signature.parameters:
-        kwargs["host"] = host
-    if "port" in signature.parameters:
-        kwargs["port"] = port
-    if "token" in signature.parameters and token is not None:
-        kwargs["token"] = token
-    if "api_key" in signature.parameters and token is not None:
-        kwargs["api_key"] = token
-    if "base_url" in signature.parameters:
-        kwargs["base_url"] = f"http://{host}:{port}"
-
-    try:
-        return func(**kwargs)
-    except TypeError:
-        # Fallback for less introspectable callables.
-        for args in ((host, port, token), (host, port), (host,)):
-            try:
-                return func(*args)
-            except TypeError:
-                continue
-        return func()
-
-
-def _build_client(*, host: str, port: int, token: str | None) -> Any:
-    """Create a pyMeticulous client from known import paths."""
-    candidates: tuple[tuple[str, str], ...] = (
-        ("meticulous.api", "Api"),
-        ("meticulous", "Api"),
-        ("pymeticulous.client", "MeticulousClient"),
-        ("pymeticulous", "MeticulousClient"),
-        ("pyMeticulous", "MeticulousClient"),
-    )
-
-    import_errors: list[str] = []
-
-    for module_name, class_name in candidates:
-        try:
-            module = importlib.import_module(module_name)
-            client_cls = getattr(module, class_name)
-        except (ImportError, AttributeError) as err:
-            import_errors.append(f"{module_name}.{class_name}: {err}")
-            continue
-
-        try:
-            return _call_with_supported_parameters(
-                client_cls,
-                host=host,
-                port=port,
-                token=token,
-            )
-        except Exception as err:  # pragma: no cover - depends on external lib
-            raise MeticulousSetupError(str(err)) from err
-
-    raise MeticulousSetupError(
-        "Unable to import pyMeticulous client. Tried: " + "; ".join(import_errors)
-    )
-
-
-async def async_validate_connection(
-    hass: HomeAssistant,
-    *,
-    host: str,
-    port: int,
-    token: str | None,
-) -> None:
-    """Validate connectivity for config flow."""
-    client = await hass.async_add_executor_job(
-        partial(_build_client, host=host, port=port, token=token)
-    )
-
-    ping_methods = (
-        "async_test_connection",
-        "test_connection",
-        "async_ping",
-        "ping",
-        "async_get_state",
-        "get_state",
-        "async_get_status",
-        "get_status",
-    )
-
-    last_error: Exception | None = None
-    for method_name in ping_methods:
-        method = getattr(client, method_name, None)
-        if method is None:
-            continue
-
-        try:
-            if inspect.iscoroutinefunction(method):
-                await method()
-            else:
-                await hass.async_add_executor_job(method)
-            return
-        except Exception as err:  # pragma: no cover - depends on external lib
-            last_error = err
-            break
-
-    if last_error is not None:
-        message = str(last_error).lower()
-        if "auth" in message or "token" in message or "credential" in message:
-            raise MeticulousAuthError(str(last_error)) from last_error
-        raise MeticulousConnectionError(str(last_error)) from last_error
-
-
 class MeticulousDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     """Class to manage fetching Meticulous data."""
 
@@ -200,90 +68,147 @@ class MeticulousDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._host = host
         self._port = port
         self._token = token
-        self.client: Any | None = None
+
+        self.client: Api | None = None
+        self._telemetry: dict[str, Any] = {}
+        self._telemetry_lock = Lock()
+        self._last_event_at: datetime | None = None
+
+    def _build_client(self) -> Api:
+        """Build the API client."""
+        options = ApiOptions(
+            onStatus=self._handle_status_event,
+            onSensors=self._handle_sensors_event,
+        )
+        client = Api(base_url=f"http://{self._host}:{self._port}", options=options)
+
+        if self._token:
+            # Token support is optional in pyMeticulous; keep it in request headers only.
+            client.session.headers.update({"Authorization": f"Bearer {self._token}"})
+
+        return client
+
+    def _handle_status_event(self, status: StatusData) -> None:
+        """Handle status event from socket stream."""
+        with self._telemetry_lock:
+            self._telemetry.update(
+                {
+                    ATTR_PRESSURE: status.sensors.p,
+                    ATTR_FLOW_RATE: status.sensors.f,
+                    ATTR_SCALE_WEIGHT: status.sensors.w,
+                    ATTR_TEMPERATURE: status.sensors.t,
+                    ATTR_WATER_TEMP: status.sensors.t,
+                    ATTR_BREW_STATE: status.extracting,
+                }
+            )
+            self._last_event_at = datetime.now(tz=UTC)
+
+    def _handle_sensors_event(self, sensors: SensorsEvent) -> None:
+        """Handle sensors event from socket stream."""
+        with self._telemetry_lock:
+            self._telemetry[ATTR_MOTOR_LOAD] = sensors.m_pwr
+            self._last_event_at = datetime.now(tz=UTC)
+
+    def _sync_connect_and_validate(self, client: Api) -> None:
+        """Connect to socket and validate API reachability."""
+        client.connect_to_socket(retries=2)
+
+        device_info = client.get_device_info()
+        if isinstance(device_info, APIError):
+            if device_info.status in {"401", "403"}:
+                raise MeticulousAuthError(device_info.error or "Authentication failed")
+            raise MeticulousConnectionError(device_info.error or "Unable to reach machine")
 
     async def _async_setup(self) -> None:
         """Set up coordinator resources."""
-        self.client = await self.hass.async_add_executor_job(
-            partial(
-                _build_client,
-                host=self._host,
-                port=self._port,
-                token=self._token,
+        self.client = await self.hass.async_add_executor_job(self._build_client)
+
+        try:
+            await self.hass.async_add_executor_job(
+                partial(self._sync_connect_and_validate, self.client)
             )
-        )
+        except MeticulousError:
+            raise
+        except Exception as err:  # pragma: no cover - external api errors
+            raise MeticulousSetupError(str(err)) from err
 
     async def _async_update_data(self) -> dict[str, Any]:
-        """Fetch data from the Meticulous machine."""
+        """Return latest telemetry from the socket stream."""
         if self.client is None:
             await self._async_setup()
 
+        with self._telemetry_lock:
+            telemetry = dict(self._telemetry)
+            last_event_at = self._last_event_at
+
+        if last_event_at is None:
+            return telemetry
+
+        age = datetime.now(tz=UTC) - last_event_at
+        if age > timedelta(seconds=30):
+            raise UpdateFailed("No telemetry received from Meticulous socket stream")
+
+        return telemetry
+
+    def _sync_execute_action(self, action: ActionType) -> None:
+        """Execute an action through the HTTP API."""
         assert self.client is not None
-
-        async_methods = (
-            "async_get_telemetry",
-            "async_get_status",
-            "async_get_state",
-        )
-        sync_methods = (
-            "get_telemetry",
-            "get_status",
-            "get_state",
-            "fetch_telemetry",
-        )
-
-        try:
-            for method_name in async_methods:
-                method = getattr(self.client, method_name, None)
-                if method is not None and inspect.iscoroutinefunction(method):
-                    return _mapping_from_state(await method())
-
-            for method_name in sync_methods:
-                method = getattr(self.client, method_name, None)
-                if method is not None:
-                    data = await self.hass.async_add_executor_job(method)
-                    return _mapping_from_state(data)
-        except Exception as err:  # pragma: no cover - depends on external lib
-            raise UpdateFailed(f"Error communicating with Meticulous machine: {err}") from err
-
-        raise UpdateFailed("pyMeticulous client does not provide a supported telemetry method")
+        result = self.client.execute_action(action)
+        if isinstance(result, APIError):
+            raise MeticulousError(result.error or f"Action {action.value} failed")
 
     async def async_execute_action(self, action: str) -> None:
         """Execute an action on the machine."""
         if self.client is None:
             await self._async_setup()
 
-        assert self.client is not None
-
-        explicit_action_methods: dict[str, tuple[str, str]] = {
-            "start_brew": ("async_start_brew", "start_brew"),
-            "abort_brew": ("async_abort_brew", "abort_brew"),
-            "purge": ("async_purge", "purge"),
+        action_map: dict[str, ActionType] = {
+            "start_brew": ActionType.START,
+            "abort_brew": ActionType.ABORT,
+            "purge": ActionType.PURGE,
         }
 
-        methods = explicit_action_methods.get(action)
-        if methods:
-            async_name, sync_name = methods
-            async_method = getattr(self.client, async_name, None)
-            if async_method is not None and inspect.iscoroutinefunction(async_method):
-                await async_method()
-                return
+        action_type = action_map.get(action)
+        if action_type is None:
+            raise MeticulousError(f"Unsupported Meticulous action: {action}")
 
-            sync_method = getattr(self.client, sync_name, None)
-            if sync_method is not None:
-                await self.hass.async_add_executor_job(sync_method)
-                return
+        await self.hass.async_add_executor_job(
+            partial(self._sync_execute_action, action_type)
+        )
 
-        generic_methods = ("async_execute_action", "execute_action", "async_action", "action")
-        for method_name in generic_methods:
-            method = getattr(self.client, method_name, None)
-            if method is None:
-                continue
-
-            if inspect.iscoroutinefunction(method):
-                await method(action)
-            else:
-                await self.hass.async_add_executor_job(method, action)
+    async def async_disconnect(self) -> None:
+        """Disconnect socket client."""
+        if self.client is None:
             return
+        await self.hass.async_add_executor_job(self.client.disconnect_socket)
 
-        raise MeticulousError(f"Unsupported Meticulous action: {action}")
+
+async def async_validate_connection(
+    hass: HomeAssistant,
+    *,
+    host: str,
+    port: int,
+    token: str | None,
+) -> None:
+    """Validate connectivity for config flow."""
+
+    def _sync_validate() -> None:
+        client = Api(base_url=f"http://{host}:{port}")
+        if token:
+            client.session.headers.update({"Authorization": f"Bearer {token}"})
+
+        info = client.get_device_info()
+        if isinstance(info, APIError):
+            if info.status in {"401", "403"}:
+                raise MeticulousAuthError(info.error or "Authentication failed")
+            raise MeticulousConnectionError(info.error or "Unable to connect")
+
+    try:
+        await hass.async_add_executor_job(_sync_validate)
+    except MeticulousError:
+        raise
+    except Exception as err:  # pragma: no cover - external api errors
+        message = str(err).lower()
+        if "401" in message or "403" in message or "auth" in message:
+            raise MeticulousAuthError(str(err)) from err
+        raise MeticulousConnectionError(str(err)) from err

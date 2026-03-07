@@ -6,6 +6,6 @@
   "documentation": "https://github.com/smartbert/meticulous-hass",
   "iot_class": "local_polling",
   "loggers": ["meticulous", "pymeticulous"],
-  "requirements": ["pyMeticulous"],
+  "requirements": ["pymeticulous==0.3.1"],
   "version": "0.1.0"
 }
