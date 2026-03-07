@@ -361,6 +361,7 @@ class MeticulousDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def async_load_profile_by_option(self, option: str) -> None:
         """Load profile selected in HA by display option."""
+        self._ensure_dangerous_action_allowed("select_profile")
         profile_id = self._profiles_by_option.get(option)
         if profile_id is None:
             raise MeticulousError(f"Unknown profile option: {option}")
