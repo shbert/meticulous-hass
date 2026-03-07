@@ -93,6 +93,21 @@ purge | button
 
 ---
 
+# Safety for Dangerous Actions
+
+Treat `start brew` and `auto purge` as dangerous actions.
+
+Safety requirements:
+
+- Dangerous actions are opt-in via integration options and disabled by default
+- Dangerous entities are non-primary (`EntityCategory.CONFIG`)
+- Dangerous entities are disabled by default in the entity registry
+- Execution requires backend arming/confirmation step with short timeout
+- Rejected and accepted dangerous-action attempts are warning-logged
+- Backend guard must apply to UI and service/automation invocations equally
+
+---
+
 # Optional Controls
 
 | Feature | Entity |
