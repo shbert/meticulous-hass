@@ -13,6 +13,7 @@ Custom integration for Home Assistant to connect to a Meticulous espresso machin
 - Brew control buttons
 - Brew state binary sensor
 - Auto purge switch
+- Safety guards for dangerous actions (`start brew`, `auto purge`)
 
 ## Entities
 
@@ -60,6 +61,15 @@ Custom integration for Home Assistant to connect to a Meticulous espresso machin
 ## Configuration
 
 The integration uses a UI config flow and supports reload from Home Assistant.
+
+### Dangerous Actions Safety
+
+- Dangerous actions are disabled by default in integration options.
+- `Start Brew` and `Auto Purge` are marked as config entities and disabled by default.
+- To execute a dangerous action:
+  1. Enable dangerous actions in integration options.
+  2. Use `Arm Dangerous Actions`.
+  3. Execute the dangerous action within 30 seconds.
 
 ## Notes
 
