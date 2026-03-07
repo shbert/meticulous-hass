@@ -48,6 +48,39 @@ Using a DataUpdateCoordinator.
 
 ---
 
+# Device Info and Stats
+
+Expose machine metadata from `api.get_device_info()` in Home Assistant.
+
+The integration must make all available device info fields visible in HA, including:
+
+- name
+- hostname
+- serial
+- batch_number
+- build_date
+- firmware
+- software_version
+- image_build_channel
+- image_version
+- mainVoltage
+- manufacturing
+- version_history
+- repository_info
+
+Expose shot statistics from `api.get_history_statistics()`:
+
+- totalSavedShots
+- byProfile breakdown (name, count, profileVersions)
+
+Implementation expectations:
+
+- Use coordinator-managed refresh (no direct polling in entities)
+- Surface device information and statistics as diagnostic entities/attributes
+- Keep backward-compatible telemetry entities unchanged
+
+---
+
 # Control
 
 Expose controls:
