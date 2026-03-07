@@ -24,6 +24,7 @@ ATTR_WATER_TEMP = "water_temp"
 ATTR_AUTO_PURGE = "auto_purge"
 ATTR_ACTIVE_PROFILE = "active_profile"
 ATTR_AVAILABLE_PROFILES = "available_profiles"
+ATTR_DANGEROUS_ARMED_REMAINING = "dangerous_armed_remaining"
 
 ATTR_DEVICE_NAME = "device_name"
 ATTR_DEVICE_HOSTNAME = "device_hostname"

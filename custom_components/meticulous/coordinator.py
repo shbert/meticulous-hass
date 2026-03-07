@@ -30,6 +30,7 @@ from .const import (
     ATTR_AUTO_PURGE,
     ATTR_AVAILABLE_PROFILES,
     ATTR_BREW_STATE,
+    ATTR_DANGEROUS_ARMED_REMAINING,
     ATTR_DEVICE_BATCH_NUMBER,
     ATTR_DEVICE_BUILD_DATE,
     ATTR_DEVICE_FIRMWARE,
@@ -210,8 +211,19 @@ class MeticulousDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if age > timedelta(seconds=30):
                 raise UpdateFailed("No telemetry received from Meticulous socket stream")
 
+        now = datetime.now(tz=UTC)
+        if self._armed_until is None:
+            telemetry[ATTR_DANGEROUS_ARMED_REMAINING] = 0
+        else:
+            remaining = int((self._armed_until - now).total_seconds())
+            if remaining <= 0:
+                self._armed_until = None
+                telemetry[ATTR_DANGEROUS_ARMED_REMAINING] = 0
+            else:
+                telemetry[ATTR_DANGEROUS_ARMED_REMAINING] = remaining
+
         if self._last_settings_refresh_at is None or (
-            datetime.now(tz=UTC) - self._last_settings_refresh_at
+            now - self._last_settings_refresh_at
         ) > timedelta(seconds=60):
             try:
                 auto_purge = await self.hass.async_add_executor_job(
@@ -221,9 +233,7 @@ class MeticulousDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 _LOGGER.debug("Unable to refresh auto purge setting: %s", err)
             else:
                 telemetry[ATTR_AUTO_PURGE] = auto_purge
-                self._last_settings_refresh_at = datetime.now(tz=UTC)
-
-        now = datetime.now(tz=UTC)
+                self._last_settings_refresh_at = now
         if self._last_device_info_refresh_at is None or (
             now - self._last_device_info_refresh_at
         ) > timedelta(minutes=15):
@@ -413,6 +423,7 @@ class MeticulousDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             )
 
         if self._armed_until is None or now > self._armed_until:
+            self._armed_until = None
             self._log_dangerous_action_attempt(
                 action=action,
                 allowed=False,
@@ -423,6 +434,8 @@ class MeticulousDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             )
 
         self._armed_until = None
+        with self._telemetry_lock:
+            self._telemetry[ATTR_DANGEROUS_ARMED_REMAINING] = 0
         self._log_dangerous_action_attempt(
             action=action,
             allowed=True,
@@ -434,6 +447,10 @@ class MeticulousDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._armed_until = datetime.now(tz=UTC) + timedelta(
             seconds=DANGEROUS_ACTION_ARM_TIMEOUT_SECONDS
         )
+        with self._telemetry_lock:
+            self._telemetry[ATTR_DANGEROUS_ARMED_REMAINING] = (
+                DANGEROUS_ACTION_ARM_TIMEOUT_SECONDS
+            )
         _LOGGER.warning(
             "Dangerous actions armed for %s seconds",
             DANGEROUS_ACTION_ARM_TIMEOUT_SECONDS,

@@ -12,7 +12,7 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import UnitOfMass, UnitOfPressure, UnitOfTemperature
+from homeassistant.const import UnitOfMass, UnitOfPressure, UnitOfTemperature, UnitOfTime
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import DeviceInfo, EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -23,6 +23,7 @@ from .const import (
     ATTR_ACTIVE_PROFILE,
     ATTR_DEVICE_BATCH_NUMBER,
     ATTR_DEVICE_BUILD_DATE,
+    ATTR_DANGEROUS_ARMED_REMAINING,
     ATTR_DEVICE_FIRMWARE,
     ATTR_DEVICE_HOSTNAME,
     ATTR_DEVICE_IMAGE_BUILD_CHANNEL,
@@ -63,6 +64,14 @@ class MeticulousInfoSensorDescription(SensorEntityDescription):
 
 
 SENSORS: Final[tuple[MeticulousSensorEntityDescription, ...]] = (
+    MeticulousSensorEntityDescription(
+        key="dangerous_actions_armed_remaining",
+        name="Dangerous Actions Armed Remaining",
+        telemetry_key=ATTR_DANGEROUS_ARMED_REMAINING,
+        native_unit_of_measurement=UnitOfTime.SECONDS,
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
     MeticulousSensorEntityDescription(
         key="active_profile",
         name="Active Profile",
