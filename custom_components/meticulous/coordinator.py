@@ -16,6 +16,8 @@ from meticulous import APIError, Api
 from meticulous.api import ApiOptions
 from meticulous.api_types import (
     ActionType,
+    DeviceInfo,
+    HistoryStats,
     PartialSettings,
     SensorsEvent,
     Settings,
@@ -25,10 +27,25 @@ from meticulous.api_types import (
 from .const import (
     ATTR_AUTO_PURGE,
     ATTR_BREW_STATE,
+    ATTR_DEVICE_BATCH_NUMBER,
+    ATTR_DEVICE_BUILD_DATE,
+    ATTR_DEVICE_FIRMWARE,
+    ATTR_DEVICE_HOSTNAME,
+    ATTR_DEVICE_IMAGE_BUILD_CHANNEL,
+    ATTR_DEVICE_IMAGE_VERSION,
+    ATTR_DEVICE_MAIN_VOLTAGE,
+    ATTR_DEVICE_MANUFACTURING,
+    ATTR_DEVICE_NAME,
+    ATTR_DEVICE_REPOSITORY_INFO,
+    ATTR_DEVICE_SERIAL,
+    ATTR_DEVICE_SOFTWARE_VERSION,
+    ATTR_DEVICE_VERSION_HISTORY,
     ATTR_FLOW_RATE,
     ATTR_MOTOR_LOAD,
     ATTR_PRESSURE,
     ATTR_SCALE_WEIGHT,
+    ATTR_STATS_BY_PROFILE,
+    ATTR_STATS_TOTAL_SAVED_SHOTS,
     ATTR_TEMPERATURE,
     ATTR_WATER_TEMP,
     COORDINATOR_UPDATE_INTERVAL,
@@ -81,6 +98,8 @@ class MeticulousDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._telemetry_lock = Lock()
         self._last_event_at: datetime | None = None
         self._last_settings_refresh_at: datetime | None = None
+        self._last_device_info_refresh_at: datetime | None = None
+        self._last_stats_refresh_at: datetime | None = None
 
     def _build_client(self) -> Api:
         """Build the API client."""
@@ -191,7 +210,89 @@ class MeticulousDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 telemetry[ATTR_AUTO_PURGE] = auto_purge
                 self._last_settings_refresh_at = datetime.now(tz=UTC)
 
+        now = datetime.now(tz=UTC)
+        if self._last_device_info_refresh_at is None or (
+            now - self._last_device_info_refresh_at
+        ) > timedelta(minutes=15):
+            try:
+                device_info_payload = await self.hass.async_add_executor_job(
+                    self._sync_get_device_info_payload
+                )
+            except Exception as err:  # pragma: no cover - external api errors
+                _LOGGER.debug("Unable to refresh device info: %s", err)
+            else:
+                telemetry.update(device_info_payload)
+                self._last_device_info_refresh_at = now
+
+        if self._last_stats_refresh_at is None or (
+            now - self._last_stats_refresh_at
+        ) > timedelta(minutes=5):
+            try:
+                history_stats_payload = await self.hass.async_add_executor_job(
+                    self._sync_get_history_stats_payload
+                )
+            except Exception as err:  # pragma: no cover - external api errors
+                _LOGGER.debug("Unable to refresh history stats: %s", err)
+            else:
+                telemetry.update(history_stats_payload)
+                self._last_stats_refresh_at = now
+
+        with self._telemetry_lock:
+            self._telemetry.update(telemetry)
+
         return telemetry
+
+    def _sync_get_device_info_payload(self) -> dict[str, Any]:
+        """Fetch and normalize device info."""
+        assert self.client is not None
+        device_info = self.client.get_device_info()
+        if isinstance(device_info, APIError):
+            raise MeticulousError(device_info.error or "Unable to fetch device info")
+
+        return self._device_info_to_payload(device_info)
+
+    @staticmethod
+    def _device_info_to_payload(device_info: DeviceInfo) -> dict[str, Any]:
+        """Convert device info model into coordinator payload keys."""
+        return {
+            ATTR_DEVICE_NAME: device_info.name,
+            ATTR_DEVICE_HOSTNAME: device_info.hostname,
+            ATTR_DEVICE_SERIAL: device_info.serial,
+            ATTR_DEVICE_BATCH_NUMBER: device_info.batch_number,
+            ATTR_DEVICE_BUILD_DATE: device_info.build_date,
+            ATTR_DEVICE_FIRMWARE: device_info.firmware,
+            ATTR_DEVICE_SOFTWARE_VERSION: device_info.software_version,
+            ATTR_DEVICE_IMAGE_BUILD_CHANNEL: device_info.image_build_channel,
+            ATTR_DEVICE_IMAGE_VERSION: device_info.image_version,
+            ATTR_DEVICE_MAIN_VOLTAGE: device_info.mainVoltage,
+            ATTR_DEVICE_MANUFACTURING: device_info.manufacturing,
+            ATTR_DEVICE_VERSION_HISTORY: device_info.version_history,
+            ATTR_DEVICE_REPOSITORY_INFO: device_info.repository_info,
+        }
+
+    def _sync_get_history_stats_payload(self) -> dict[str, Any]:
+        """Fetch and normalize history statistics."""
+        assert self.client is not None
+        stats = self.client.get_history_statistics()
+        if isinstance(stats, APIError):
+            raise MeticulousError(stats.error or "Unable to fetch history statistics")
+
+        return self._history_stats_to_payload(stats)
+
+    @staticmethod
+    def _history_stats_to_payload(stats: HistoryStats) -> dict[str, Any]:
+        """Convert history statistics model into coordinator payload keys."""
+        return {
+            ATTR_STATS_TOTAL_SAVED_SHOTS: stats.totalSavedShots,
+            ATTR_STATS_BY_PROFILE: [
+                {
+                    "name": item.name,
+                    "count": item.count,
+                    "profile_versions": item.profileVersions,
+                }
+                for item in stats.byProfile
+            ],
+        }
 
     def _sync_get_auto_purge(self) -> bool:
         """Fetch auto purge setting from machine settings."""

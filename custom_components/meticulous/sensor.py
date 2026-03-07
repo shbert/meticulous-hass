@@ -14,16 +14,31 @@ from homeassistant.components.sensor import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import UnitOfMass, UnitOfPressure, UnitOfTemperature
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.helpers.entity import DeviceInfo, EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import MeticulousConfigEntry
 from .const import (
+    ATTR_DEVICE_BATCH_NUMBER,
+    ATTR_DEVICE_BUILD_DATE,
+    ATTR_DEVICE_FIRMWARE,
+    ATTR_DEVICE_HOSTNAME,
+    ATTR_DEVICE_IMAGE_BUILD_CHANNEL,
+    ATTR_DEVICE_IMAGE_VERSION,
+    ATTR_DEVICE_MAIN_VOLTAGE,
+    ATTR_DEVICE_MANUFACTURING,
+    ATTR_DEVICE_NAME,
+    ATTR_DEVICE_REPOSITORY_INFO,
+    ATTR_DEVICE_SERIAL,
+    ATTR_DEVICE_SOFTWARE_VERSION,
+    ATTR_DEVICE_VERSION_HISTORY,
     ATTR_FLOW_RATE,
     ATTR_MOTOR_LOAD,
     ATTR_PRESSURE,
     ATTR_SCALE_WEIGHT,
+    ATTR_STATS_BY_PROFILE,
+    ATTR_STATS_TOTAL_SAVED_SHOTS,
     ATTR_TEMPERATURE,
     ATTR_WATER_TEMP,
     DOMAIN,
@@ -36,6 +51,14 @@ class MeticulousSensorEntityDescription(SensorEntityDescription):
     """Describes Meticulous sensor entity."""
 
     telemetry_key: str
+
+
+@dataclass(frozen=True, kw_only=True)
+class MeticulousInfoSensorDescription(SensorEntityDescription):
+    """Describes Meticulous info sensor entity."""
+
+    telemetry_key: str
+    extra_attribute_keys: tuple[str, ...] = ()
 
 
 SENSORS: Final[tuple[MeticulousSensorEntityDescription, ...]] = (
@@ -81,6 +104,37 @@ SENSORS: Final[tuple[MeticulousSensorEntityDescription, ...]] = (
     ),
 )
 
+INFO_SENSORS: Final[tuple[MeticulousInfoSensorDescription, ...]] = (
+    MeticulousInfoSensorDescription(
+        key="total_saved_shots",
+        name="Total Saved Shots",
+        telemetry_key=ATTR_STATS_TOTAL_SAVED_SHOTS,
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    MeticulousInfoSensorDescription(
+        key="device_info",
+        name="Device Info",
+        telemetry_key=ATTR_DEVICE_SOFTWARE_VERSION,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        extra_attribute_keys=(
+            ATTR_DEVICE_NAME,
+            ATTR_DEVICE_HOSTNAME,
+            ATTR_DEVICE_SERIAL,
+            ATTR_DEVICE_BATCH_NUMBER,
+            ATTR_DEVICE_BUILD_DATE,
+            ATTR_DEVICE_FIRMWARE,
+            ATTR_DEVICE_SOFTWARE_VERSION,
+            ATTR_DEVICE_IMAGE_BUILD_CHANNEL,
+            ATTR_DEVICE_IMAGE_VERSION,
+            ATTR_DEVICE_MAIN_VOLTAGE,
+            ATTR_DEVICE_MANUFACTURING,
+            ATTR_DEVICE_VERSION_HISTORY,
+            ATTR_DEVICE_REPOSITORY_INFO,
+            ATTR_STATS_BY_PROFILE,
+        ),
+    ),
+)
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -94,6 +148,10 @@ async def async_setup_entry(
 
     async_add_entities(
         MeticulousSensor(coordinator, typed_entry, description) for description in SENSORS
+    )
+    async_add_entities(
+        MeticulousInfoSensor(coordinator, typed_entry, description)
+        for description in INFO_SENSORS
     )
 
 
@@ -133,3 +191,49 @@ class MeticulousSensor(CoordinatorEntity[MeticulousDataUpdateCoordinator], Senso
             return value
 
         return str(value)
+
+
+class MeticulousInfoSensor(CoordinatorEntity[MeticulousDataUpdateCoordinator], SensorEntity):
+    """Representation of a Meticulous diagnostic sensor."""
+
+    entity_description: MeticulousInfoSensorDescription
+
+    def __init__(
+        self,
+        coordinator: MeticulousDataUpdateCoordinator,
+        entry: MeticulousConfigEntry,
+        description: MeticulousInfoSensorDescription,
+    ) -> None:
+        """Initialize info sensor entity."""
+        super().__init__(coordinator)
+        self.entity_description = description
+        self._attr_unique_id = f"{entry.entry_id}_{description.key}"
+        self._attr_has_entity_name = True
+
+        host = entry.data["host"]
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, entry.entry_id)},
+            name=f"Meticulous ({host})",
+            manufacturer="Meticulous",
+            model="Espresso Machine",
+        )
+
+    @property
+    def native_value(self) -> str | int | float | None:
+        """Return sensor value."""
+        value = self.coordinator.data.get(self.entity_description.telemetry_key)
+        if value is None:
+            return None
+        if isinstance(value, (int, float, str)):
+            return value
+        return str(value)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, object]:
+        """Return extra attributes for diagnostic sensor."""
+        attributes: dict[str, object] = {}
+        for key in self.entity_description.extra_attribute_keys:
+            value = self.coordinator.data.get(key)
+            if value is not None:
+                attributes[key] = value
+        return attributes
