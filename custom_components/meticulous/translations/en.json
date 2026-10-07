@@ -1,0 +1,45 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Meticulous espresso machine",
+        "description": "Local API of the machine (plain HTTP, port 80 on current firmware).",
+        "data": {
+          "host": "Host",
+          "port": "Port",
+          "token": "Token (optional)"
+        },
+        "data_description": {
+          "host": "IP address or hostname of the machine, e.g. 192.168.178.167.",
+          "port": "80 on current firmware; older builds used 8080."
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Cannot connect to the machine.",
+      "invalid_auth": "Authentication failed.",
+      "unknown": "Unexpected error."
+    },
+    "abort": {
+      "already_configured": "This machine is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Meticulous options",
+        "data": {
+          "allow_dangerous_actions": "Allow dangerous actions (start brew, preheat, auto purge, profile selection)",
+          "meticai_url": "MeticAI server URL (optional)"
+        },
+        "data_description": {
+          "allow_dangerous_actions": "Even when allowed, each dangerous action must be armed first ('Arm Dangerous Actions', 30 s window).",
+          "meticai_url": "e.g. https://meticai.example.com — adds last-shot sensors and an AI 'Analyze Last Shot' button (uses the LLM configured in MeticAI). Leave empty to disable."
+        }
+      }
+    },
+    "error": {
+      "meticai_unreachable": "MeticAI did not answer on /health at this URL."
+    }
+  }
+}

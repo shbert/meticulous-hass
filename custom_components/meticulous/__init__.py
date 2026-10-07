@@ -13,6 +13,7 @@ from homeassistant.exceptions import ConfigEntryNotReady
 
 from .const import (
     CONF_ALLOW_DANGEROUS_ACTIONS,
+    CONF_METICAI_URL,
     CONF_TOKEN,
     DOMAIN,
     PLATFORMS,
@@ -57,6 +58,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: MeticulousConfigEntry) -
         port=port,
         token=token,
         allow_dangerous_actions=allow_dangerous_actions,
+        meticai_url=entry.options.get(CONF_METICAI_URL) or None,
     )
 
     try:
