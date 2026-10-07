@@ -119,9 +119,10 @@ class MeticulousButton(CoordinatorEntity[MeticulousDataUpdateCoordinator], Butto
         host = entry.data["host"]
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, entry.entry_id)},
-            name=f"Meticulous ({host})",
+            name="Meticulous",
             manufacturer="Meticulous",
             model="Espresso Machine",
+            configuration_url=f"http://{host}",
         )
 
     async def async_press(self) -> None:
