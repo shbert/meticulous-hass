@@ -1,0 +1,45 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Meticulous Espressomaschine",
+        "description": "Lokale API der Maschine (HTTP, Port 80 bei aktueller Firmware).",
+        "data": {
+          "host": "Host",
+          "port": "Port",
+          "token": "Token (optional)"
+        },
+        "data_description": {
+          "host": "IP-Adresse oder Hostname der Maschine, z. B. 192.168.178.167.",
+          "port": "80 bei aktueller Firmware; ältere Versionen nutzten 8080."
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Keine Verbindung zur Maschine.",
+      "invalid_auth": "Authentifizierung fehlgeschlagen.",
+      "unknown": "Unerwarteter Fehler."
+    },
+    "abort": {
+      "already_configured": "Diese Maschine ist bereits eingerichtet."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Meticulous Optionen",
+        "data": {
+          "allow_dangerous_actions": "Gefährliche Aktionen erlauben (Bezug starten, Vorheizen, Auto-Spülen, Profilwahl)",
+          "meticai_url": "MeticAI-Server-URL (optional)"
+        },
+        "data_description": {
+          "allow_dangerous_actions": "Auch wenn erlaubt, muss jede gefährliche Aktion vorher scharf geschaltet werden ('Arm Dangerous Actions', 30-s-Fenster).",
+          "meticai_url": "z. B. https://meticai.example.com — ergänzt Sensoren zum letzten Bezug und einen KI-Button 'Analyze Last Shot' (nutzt das in MeticAI konfigurierte LLM). Leer lassen zum Deaktivieren."
+        }
+      }
+    },
+    "error": {
+      "meticai_unreachable": "MeticAI hat unter dieser URL nicht auf /health geantwortet."
+    }
+  }
+}

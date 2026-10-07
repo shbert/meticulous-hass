@@ -51,6 +51,30 @@ BUTTONS: Final[tuple[MeticulousButtonEntityDescription, ...]] = (
         name="Purge",
         action="purge",
     ),
+    MeticulousButtonEntityDescription(
+        key="tare",
+        name="Tare Scale",
+        action="tare",
+        icon="mdi:scale-balance",
+    ),
+    MeticulousButtonEntityDescription(
+        key="preheat",
+        name="Preheat",
+        action="preheat",
+        icon="mdi:fire",
+        dangerous=True,
+        entity_category=EntityCategory.CONFIG,
+    ),
+)
+
+# Only created when a MeticAI server URL is configured in the options.
+METICAI_BUTTONS: Final[tuple[MeticulousButtonEntityDescription, ...]] = (
+    MeticulousButtonEntityDescription(
+        key="analyze_last_shot",
+        name="Analyze Last Shot",
+        action="analyze_last_shot",
+        icon="mdi:robot-outline",
+    ),
 )
 
 
@@ -67,6 +91,11 @@ async def async_setup_entry(
     async_add_entities(
         MeticulousButton(coordinator, typed_entry, description) for description in BUTTONS
     )
+    if coordinator.meticai_enabled:
+        async_add_entities(
+            MeticulousButton(coordinator, typed_entry, description)
+            for description in METICAI_BUTTONS
+        )
 
 
 class MeticulousButton(CoordinatorEntity[MeticulousDataUpdateCoordinator], ButtonEntity):
@@ -90,15 +119,19 @@ class MeticulousButton(CoordinatorEntity[MeticulousDataUpdateCoordinator], Butto
         host = entry.data["host"]
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, entry.entry_id)},
-            name=f"Meticulous ({host})",
+            name="Meticulous",
             manufacturer="Meticulous",
             model="Espresso Machine",
+            configuration_url=f"http://{host}",
         )
 
     async def async_press(self) -> None:
         """Press the button."""
         if self.entity_description.arms_dangerous_actions:
             await self.coordinator.async_arm_dangerous_actions()
+            return
+        if self.entity_description.action == "analyze_last_shot":
+            await self.coordinator.async_analyze_last_shot()
             return
 
         await self.coordinator.async_execute_action(self.entity_description.action)

@@ -4,14 +4,17 @@ from __future__ import annotations
 
 from typing import Any
 
+import aiohttp
 import voluptuous as vol
 
 from homeassistant.config_entries import ConfigEntry, ConfigFlow, OptionsFlow
 from homeassistant.const import CONF_HOST, CONF_PORT
 from homeassistant.data_entry_flow import FlowResult
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .const import (
     CONF_ALLOW_DANGEROUS_ACTIONS,
+    CONF_METICAI_URL,
     CONF_TOKEN,
     DEFAULT_PORT,
     DOMAIN,
@@ -95,14 +98,20 @@ class MeticulousOptionsFlow(OptionsFlow):
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         """Manage Meticulous options."""
+        errors: dict[str, str] = {}
         if user_input is not None:
             allow = bool(user_input.get(CONF_ALLOW_DANGEROUS_ACTIONS, False))
-            return self.async_create_entry(
-                title="",
-                data={
-                    CONF_ALLOW_DANGEROUS_ACTIONS: allow,
-                },
-            )
+            meticai_url = (user_input.get(CONF_METICAI_URL) or "").strip().rstrip("/")
+            if meticai_url and not await self._async_meticai_reachable(meticai_url):
+                errors[CONF_METICAI_URL] = "meticai_unreachable"
+            else:
+                return self.async_create_entry(
+                    title="",
+                    data={
+                        CONF_ALLOW_DANGEROUS_ACTIONS: allow,
+                        CONF_METICAI_URL: meticai_url,
+                    },
+                )
 
         current_allow = bool(
             self._config_entry.options.get(
@@ -118,8 +127,28 @@ class MeticulousOptionsFlow(OptionsFlow):
                 vol.Optional(
                     CONF_ALLOW_DANGEROUS_ACTIONS,
                     default=current_allow,
-                ): bool
+                ): bool,
+                vol.Optional(
+                    CONF_METICAI_URL,
+                    default=self._config_entry.options.get(CONF_METICAI_URL, ""),
+                ): str,
             }
         )
 
-        return self.async_show_form(step_id="init", data_schema=data_schema)
+        return self.async_show_form(
+            step_id="init", data_schema=data_schema, errors=errors
+        )
+
+    async def _async_meticai_reachable(self, url: str) -> bool:
+        """Return True when `url` answers like a MeticAI server (GET /health)."""
+        session = async_get_clientsession(self.hass)
+        try:
+            async with session.get(
+                f"{url}/health", timeout=aiohttp.ClientTimeout(total=10)
+            ) as resp:
+                if resp.status != 200:
+                    return False
+                body = await resp.json(content_type=None)
+        except (aiohttp.ClientError, TimeoutError, ValueError):
+            return False
+        return isinstance(body, dict) and body.get("status") == "ok"

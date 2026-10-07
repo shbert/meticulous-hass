@@ -2,12 +2,14 @@
 
 Custom integration for Home Assistant to connect to a Meticulous espresso machine using `pymeticulous`.
 
-> [!WARNING]
-> This integration is currently **untested** and **not yet finished**. Use it as a work in progress.
+> [!NOTE]
+> v0.2.0 is tested against a real machine (firmware 0.2.24) on Home Assistant 2026.9.
+> It is still young; report issues on GitHub.
 
 ## Features
 
-- Local API connection to a Meticulous machine
+- Local API connection to a Meticulous machine (REST + socket.io push telemetry, auto-reconnect)
+- Optional [MeticAI](https://github.com/hessius/MeticAI) bridge: last-shot sensors and an AI "Analyze Last Shot" button
 - Config flow setup from Home Assistant UI
 - Telemetry updates via `DataUpdateCoordinator` every 5 seconds
 - Brew control buttons
@@ -19,12 +21,17 @@ Custom integration for Home Assistant to connect to a Meticulous espresso machin
 
 ### Sensors
 
+- Machine State (`idle`, `preheating`, `brewing`, …)
+- Active Profile (the profile loaded on the machine)
 - Machine Temperature
 - Machine Pressure
 - Flow Rate
 - Scale Weight
 - Motor Load
-- Water Temperature
+- Total Saved Shots, Device Info (diagnostic)
+- With MeticAI configured: Last Shot (timestamp), Last Shot Profile, Last Shot Weight,
+  Last Shot Duration, Last Shot Analysis (summary in the state, full text in the
+  `last_analysis` attribute), MeticAI Version (diagnostic)
 
 ### Binary Sensors
 
@@ -32,9 +39,14 @@ Custom integration for Home Assistant to connect to a Meticulous espresso machin
 
 ### Buttons
 
-- Start Brew
+- Arm Dangerous Actions
+- Start Brew (dangerous)
+- Preheat (dangerous)
 - Abort Brew
 - Purge
+- Tare Scale
+- With MeticAI configured: Analyze Last Shot (runs in the background, 1–3 min; uses
+  the LLM configured in MeticAI, so it costs tokens)
 
 ### Switches
 
@@ -60,7 +72,8 @@ Custom integration for Home Assistant to connect to a Meticulous espresso machin
 6. Restart Home Assistant.
 7. Go to `Settings` -> `Devices & Services` -> `Add Integration`.
 8. Search for `Meticulous`.
-9. Enter `host`, `port` (default `8080`), and optional `token`.
+9. Enter `host`, `port` (default `80`; older firmware used `8080`), and optional `token`.
+10. Optional: in the integration options, set the MeticAI server URL.
 
 ## Configuration
 
@@ -69,7 +82,7 @@ The integration uses a UI config flow and supports reload from Home Assistant.
 ### Dangerous Actions Safety
 
 - Dangerous actions are disabled by default in integration options.
-- `Start Brew`, `Auto Purge`, and profile selection are marked as config entities and disabled by default.
+- `Start Brew`, `Preheat`, `Auto Purge`, and profile selection are marked as config entities and disabled by default.
 - To execute a dangerous action:
   1. Enable dangerous actions in integration options.
   2. Use `Arm Dangerous Actions`.

@@ -4,13 +4,18 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from functools import partial
+import asyncio
 import logging
 from threading import Lock
 from typing import Any
 
+import aiohttp
+
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.util import dt as dt_util
 
 from meticulous import APIError, Api
 from meticulous.api import ApiOptions
@@ -51,13 +56,44 @@ from .const import (
     ATTR_STATS_BY_PROFILE,
     ATTR_STATS_TOTAL_SAVED_SHOTS,
     ATTR_TEMPERATURE,
-    ATTR_WATER_TEMP,
+    ATTR_ANALYSIS_RUNNING,
+    ATTR_LAST_ANALYSIS,
+    ATTR_LAST_ANALYSIS_AT,
+    ATTR_LAST_ANALYSIS_SHOT,
+    ATTR_LAST_ANALYSIS_SUMMARY,
+    ATTR_LAST_SHOT_DATE,
+    ATTR_LAST_SHOT_DURATION,
+    ATTR_LAST_SHOT_FILENAME,
+    ATTR_LAST_SHOT_PROFILE,
+    ATTR_LAST_SHOT_TIME,
+    ATTR_LAST_SHOT_WEIGHT,
+    ATTR_MACHINE_STATE,
+    ATTR_METICAI_AVAILABLE,
+    ATTR_METICAI_UPDATE_AVAILABLE,
+    ATTR_METICAI_VERSION,
     COORDINATOR_UPDATE_INTERVAL,
     DANGEROUS_ACTION_ARM_TIMEOUT_SECONDS,
     DOMAIN,
+    METICAI_ANALYSIS_TIMEOUT_SECONDS,
+    METICAI_REFRESH_INTERVAL,
+    TELEMETRY_STALE_SECONDS,
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+
+# Actions that move water or heat the machine need the opt-in + arming gate (ADR-0003).
+DANGEROUS_ACTIONS = frozenset({"start_brew", "preheat"})
+
+
+def _summarize(text: str, limit: int = 250) -> str:
+    """Return a short state-sized summary of a markdown analysis."""
+    for line in text.splitlines():
+        cleaned = line.strip().lstrip("#*->").strip().replace("**", "")
+        if len(cleaned) > 20:
+            return cleaned[: limit - 1] + "…" if len(cleaned) > limit else cleaned
+    flat = " ".join(text.split())
+    return flat[: limit - 1] + "…" if len(flat) > limit else flat
 
 
 class MeticulousError(HomeAssistantError):
@@ -91,6 +127,7 @@ class MeticulousDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         port: int,
         token: str | None,
         allow_dangerous_actions: bool,
+        meticai_url: str | None = None,
     ) -> None:
         """Initialize the coordinator."""
         super().__init__(
@@ -114,6 +151,15 @@ class MeticulousDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._armed_until: datetime | None = None
         self._profiles_by_option: dict[str, str] = {}
         self._last_profile_refresh_at: datetime | None = None
+        self._connected_at: datetime | None = None
+        self._meticai_url = meticai_url.rstrip("/") if meticai_url else None
+        self._last_meticai_refresh_at: datetime | None = None
+        self._analysis_task: asyncio.Task | None = None
+
+    @property
+    def meticai_enabled(self) -> bool:
+        """Return True when an optional MeticAI server is configured."""
+        return self._meticai_url is not None
 
     def _build_client(self) -> Api:
         """Build the API client."""
@@ -149,9 +195,12 @@ class MeticulousDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     ATTR_FLOW_RATE: status_event.sensors.f,
                     ATTR_SCALE_WEIGHT: status_event.sensors.w,
                     ATTR_TEMPERATURE: status_event.sensors.t,
-                    ATTR_WATER_TEMP: status_event.sensors.t,
                     ATTR_BREW_STATE: status_event.extracting,
-                    ATTR_ACTIVE_PROFILE: status_event.profile,
+                    ATTR_MACHINE_STATE: status_event.state,
+                    # `profile` is the running stage ("idle" when idle); the profile that
+                    # is loaded on the machine is `loaded_profile`.
+                    ATTR_ACTIVE_PROFILE: status_event.loaded_profile
+                    or status_event.profile,
                 }
             )
             self._last_event_at = datetime.now(tz=UTC)
@@ -196,6 +245,31 @@ class MeticulousDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             raise
         except Exception as err:  # pragma: no cover - external api errors
             raise MeticulousSetupError(str(err)) from err
+        self._connected_at = datetime.now(tz=UTC)
+
+    def _sync_reconnect(self) -> None:
+        """Drop and re-open the socket.io connection."""
+        assert self.client is not None
+        try:
+            self.client.disconnect_socket()
+        except Exception as err:  # pragma: no cover - depends on socket state
+            _LOGGER.debug("Ignoring socket disconnect error: %s", err)
+        self.client.connect_to_socket(retries=2)
+
+    async def _async_ensure_fresh_telemetry(self, last_event_at: datetime | None) -> None:
+        """Reconnect when the socket stream went quiet; raise UpdateFailed if that fails."""
+        now = datetime.now(tz=UTC)
+        reference = last_event_at or self._connected_at
+        if reference is None or now - reference <= timedelta(seconds=TELEMETRY_STALE_SECONDS):
+            return
+        _LOGGER.info("Meticulous telemetry stale since %s, reconnecting socket", reference)
+        try:
+            await self.hass.async_add_executor_job(self._sync_reconnect)
+        except Exception as err:  # pragma: no cover - external socket errors
+            raise UpdateFailed(f"Meticulous socket reconnect failed: {err}") from err
+        self._connected_at = datetime.now(tz=UTC)
+        with self._telemetry_lock:
+            self._last_event_at = None
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Return latest telemetry from the socket stream."""
@@ -206,10 +280,7 @@ class MeticulousDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             telemetry = dict(self._telemetry)
             last_event_at = self._last_event_at
 
-        if last_event_at is not None:
-            age = datetime.now(tz=UTC) - last_event_at
-            if age > timedelta(seconds=30):
-                raise UpdateFailed("No telemetry received from Meticulous socket stream")
+        await self._async_ensure_fresh_telemetry(last_event_at)
 
         now = datetime.now(tz=UTC)
         if self._armed_until is None:
@@ -273,10 +344,121 @@ class MeticulousDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 telemetry.update(profiles_payload)
                 self._last_profile_refresh_at = now
 
+        if self._meticai_url and (
+            self._last_meticai_refresh_at is None
+            or now - self._last_meticai_refresh_at > METICAI_REFRESH_INTERVAL
+        ):
+            telemetry.update(await self._async_fetch_meticai())
+            self._last_meticai_refresh_at = now
+
         with self._telemetry_lock:
             self._telemetry.update(telemetry)
 
         return telemetry
+
+    # ---------------------------------------------------------------- MeticAI
+    async def _async_meticai_get(self, path: str) -> Any:
+        """GET a JSON document from the optional MeticAI server."""
+        session = async_get_clientsession(self.hass)
+        async with session.get(
+            f"{self._meticai_url}{path}", timeout=aiohttp.ClientTimeout(total=15)
+        ) as resp:
+            resp.raise_for_status()
+            return await resp.json()
+
+    async def _async_fetch_meticai(self) -> dict[str, Any]:
+        """Fetch last-shot metadata and server status from MeticAI (read-only)."""
+        payload: dict[str, Any] = {}
+        try:
+            status = await self._async_meticai_get("/api/status")
+            last_shot = await self._async_meticai_get("/api/last-shot")
+        except (aiohttp.ClientError, TimeoutError, ValueError) as err:
+            _LOGGER.debug("MeticAI not reachable: %s", err)
+            payload[ATTR_METICAI_AVAILABLE] = False
+            return payload
+
+        payload[ATTR_METICAI_AVAILABLE] = True
+        payload[ATTR_METICAI_VERSION] = status.get("current_version")
+        payload[ATTR_METICAI_UPDATE_AVAILABLE] = bool(status.get("update_available"))
+        if isinstance(last_shot, dict) and last_shot.get("filename"):
+            timestamp = last_shot.get("timestamp")
+            payload.update(
+                {
+                    ATTR_LAST_SHOT_PROFILE: last_shot.get("profile_name"),
+                    ATTR_LAST_SHOT_WEIGHT: last_shot.get("final_weight"),
+                    ATTR_LAST_SHOT_DURATION: last_shot.get("total_time"),
+                    ATTR_LAST_SHOT_DATE: last_shot.get("date"),
+                    ATTR_LAST_SHOT_FILENAME: last_shot.get("filename"),
+                    ATTR_LAST_SHOT_TIME: dt_util.utc_from_timestamp(float(timestamp))
+                    if timestamp is not None
+                    else None,
+                }
+            )
+        return payload
+
+    async def async_analyze_last_shot(self) -> None:
+        """Ask MeticAI for an AI analysis of the last shot (costs LLM tokens).
+
+        Runs in the background: MeticAI's reasoning models take 1-3 minutes.
+        """
+        if not self._meticai_url:
+            raise MeticulousError("MeticAI is not configured for this machine")
+        if self._analysis_task is not None and not self._analysis_task.done():
+            raise MeticulousError("An analysis is already running")
+        data = self.data or {}
+        filename = data.get(ATTR_LAST_SHOT_FILENAME)
+        if not filename:
+            raise MeticulousError("MeticAI has no last shot to analyse")
+        shot = {
+            "profile_name": data.get(ATTR_LAST_SHOT_PROFILE) or "Unknown",
+            "shot_date": data.get(ATTR_LAST_SHOT_DATE) or "",
+            "shot_filename": filename,
+        }
+        self._set_telemetry({ATTR_ANALYSIS_RUNNING: True})
+        self.async_update_listeners()
+        self._analysis_task = self.hass.async_create_background_task(
+            self._async_run_analysis(shot), f"{DOMAIN}_analyze_last_shot"
+        )
+
+    async def _async_run_analysis(self, shot: dict[str, str]) -> None:
+        """Background part of async_analyze_last_shot."""
+        session = async_get_clientsession(self.hass)
+        form = aiohttp.FormData()
+        for key, value in shot.items():
+            form.add_field(key, value)
+        update: dict[str, Any] = {ATTR_ANALYSIS_RUNNING: False}
+        try:
+            async with session.post(
+                f"{self._meticai_url}/api/shots/analyze-llm",
+                data=form,
+                timeout=aiohttp.ClientTimeout(total=METICAI_ANALYSIS_TIMEOUT_SECONDS),
+            ) as resp:
+                resp.raise_for_status()
+                result = await resp.json()
+        except (aiohttp.ClientError, TimeoutError, ValueError) as err:
+            _LOGGER.warning("MeticAI shot analysis failed: %s", err)
+            update[ATTR_LAST_ANALYSIS_SUMMARY] = f"Fehler: {err}"[:250]
+        else:
+            if result.get("status") == "success" and result.get("llm_analysis"):
+                text = str(result["llm_analysis"])
+                update.update(
+                    {
+                        ATTR_LAST_ANALYSIS: text,
+                        ATTR_LAST_ANALYSIS_SUMMARY: _summarize(text),
+                        ATTR_LAST_ANALYSIS_SHOT: shot["shot_filename"],
+                        ATTR_LAST_ANALYSIS_AT: dt_util.utcnow(),
+                    }
+                )
+            else:
+                message = result.get("message") or "unknown error"
+                _LOGGER.warning("MeticAI shot analysis returned an error: %s", message)
+                update[ATTR_LAST_ANALYSIS_SUMMARY] = f"Fehler: {message}"[:250]
+        self._set_telemetry(update)
+        self.async_set_updated_data({**(self.data or {}), **update})
+
+    def _set_telemetry(self, values: dict[str, Any]) -> None:
+        with self._telemetry_lock:
+            self._telemetry.update(values)
 
     def _sync_get_device_info_payload(self) -> dict[str, Any]:
         """Fetch and normalize device info."""
@@ -465,13 +647,15 @@ class MeticulousDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "start_brew": ActionType.START,
             "abort_brew": ActionType.ABORT,
             "purge": ActionType.PURGE,
+            "preheat": ActionType.PREHEAT,
+            "tare": ActionType.TARE,
         }
 
         action_type = action_map.get(action)
         if action_type is None:
             raise MeticulousError(f"Unsupported Meticulous action: {action}")
 
-        if action == "start_brew":
+        if action in DANGEROUS_ACTIONS:
             self._ensure_dangerous_action_allowed(action)
 
         await self.hass.async_add_executor_job(

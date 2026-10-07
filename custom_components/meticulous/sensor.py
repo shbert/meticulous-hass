@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Final
 
 from homeassistant.components.sensor import (
@@ -12,7 +13,12 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import UnitOfMass, UnitOfPressure, UnitOfTemperature, UnitOfTime
+from homeassistant.const import (
+    UnitOfMass,
+    UnitOfPressure,
+    UnitOfTemperature,
+    UnitOfTime,
+)
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import DeviceInfo, EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -42,7 +48,18 @@ from .const import (
     ATTR_STATS_BY_PROFILE,
     ATTR_STATS_TOTAL_SAVED_SHOTS,
     ATTR_TEMPERATURE,
-    ATTR_WATER_TEMP,
+    ATTR_LAST_ANALYSIS,
+    ATTR_LAST_ANALYSIS_AT,
+    ATTR_LAST_ANALYSIS_SHOT,
+    ATTR_LAST_ANALYSIS_SUMMARY,
+    ATTR_ANALYSIS_RUNNING,
+    ATTR_LAST_SHOT_DURATION,
+    ATTR_LAST_SHOT_PROFILE,
+    ATTR_LAST_SHOT_TIME,
+    ATTR_LAST_SHOT_WEIGHT,
+    ATTR_MACHINE_STATE,
+    ATTR_METICAI_UPDATE_AVAILABLE,
+    ATTR_METICAI_VERSION,
     DOMAIN,
 )
 from .coordinator import MeticulousDataUpdateCoordinator
@@ -73,6 +90,12 @@ SENSORS: Final[tuple[MeticulousSensorEntityDescription, ...]] = (
         entity_category=EntityCategory.DIAGNOSTIC,
     ),
     MeticulousSensorEntityDescription(
+        key="machine_state",
+        name="Machine State",
+        telemetry_key=ATTR_MACHINE_STATE,
+        icon="mdi:coffee-maker-outline",
+    ),
+    MeticulousSensorEntityDescription(
         key="active_profile",
         name="Active Profile",
         telemetry_key=ATTR_ACTIVE_PROFILE,
@@ -95,6 +118,9 @@ SENSORS: Final[tuple[MeticulousSensorEntityDescription, ...]] = (
         key="flow_rate",
         name="Flow Rate",
         telemetry_key=ATTR_FLOW_RATE,
+        native_unit_of_measurement="ml/s",
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=1,
     ),
     MeticulousSensorEntityDescription(
         key="scale_weight",
@@ -110,12 +136,56 @@ SENSORS: Final[tuple[MeticulousSensorEntityDescription, ...]] = (
         native_unit_of_measurement="%",
         state_class=SensorStateClass.MEASUREMENT,
     ),
-    MeticulousSensorEntityDescription(
-        key="water_temp",
-        name="Water Temperature",
-        telemetry_key=ATTR_WATER_TEMP,
-        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
-        device_class=SensorDeviceClass.TEMPERATURE,
+)
+
+# Only created when a MeticAI server URL is configured in the options.
+METICAI_SENSORS: Final[tuple[MeticulousInfoSensorDescription, ...]] = (
+    MeticulousInfoSensorDescription(
+        key="last_shot_profile",
+        name="Last Shot Profile",
+        telemetry_key=ATTR_LAST_SHOT_PROFILE,
+        icon="mdi:coffee",
+        extra_attribute_keys=(ATTR_LAST_SHOT_WEIGHT, ATTR_LAST_SHOT_DURATION),
+    ),
+    MeticulousInfoSensorDescription(
+        key="last_shot_time",
+        name="Last Shot",
+        telemetry_key=ATTR_LAST_SHOT_TIME,
+        device_class=SensorDeviceClass.TIMESTAMP,
+    ),
+    MeticulousInfoSensorDescription(
+        key="last_shot_weight",
+        name="Last Shot Weight",
+        telemetry_key=ATTR_LAST_SHOT_WEIGHT,
+        native_unit_of_measurement=UnitOfMass.GRAMS,
+        suggested_display_precision=1,
+    ),
+    MeticulousInfoSensorDescription(
+        key="last_shot_duration",
+        name="Last Shot Duration",
+        telemetry_key=ATTR_LAST_SHOT_DURATION,
+        native_unit_of_measurement=UnitOfTime.SECONDS,
+        device_class=SensorDeviceClass.DURATION,
+        suggested_display_precision=1,
+    ),
+    MeticulousInfoSensorDescription(
+        key="last_shot_analysis",
+        name="Last Shot Analysis",
+        telemetry_key=ATTR_LAST_ANALYSIS_SUMMARY,
+        icon="mdi:robot-outline",
+        extra_attribute_keys=(
+            ATTR_LAST_ANALYSIS,
+            ATTR_LAST_ANALYSIS_SHOT,
+            ATTR_LAST_ANALYSIS_AT,
+            ATTR_ANALYSIS_RUNNING,
+        ),
+    ),
+    MeticulousInfoSensorDescription(
+        key="meticai_version",
+        name="MeticAI Version",
+        telemetry_key=ATTR_METICAI_VERSION,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        extra_attribute_keys=(ATTR_METICAI_UPDATE_AVAILABLE,),
     ),
 )
 
@@ -168,6 +238,11 @@ async def async_setup_entry(
         MeticulousInfoSensor(coordinator, typed_entry, description)
         for description in INFO_SENSORS
     )
+    if coordinator.meticai_enabled:
+        async_add_entities(
+            MeticulousInfoSensor(coordinator, typed_entry, description)
+            for description in METICAI_SENSORS
+        )
 
 
 class MeticulousSensor(CoordinatorEntity[MeticulousDataUpdateCoordinator], SensorEntity):
@@ -190,9 +265,10 @@ class MeticulousSensor(CoordinatorEntity[MeticulousDataUpdateCoordinator], Senso
         host = entry.data["host"]
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, entry.entry_id)},
-            name=f"Meticulous ({host})",
+            name="Meticulous",
             manufacturer="Meticulous",
             model="Espresso Machine",
+            configuration_url=f"http://{host}",
         )
 
     @property
@@ -228,9 +304,10 @@ class MeticulousInfoSensor(CoordinatorEntity[MeticulousDataUpdateCoordinator], S
         host = entry.data["host"]
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, entry.entry_id)},
-            name=f"Meticulous ({host})",
+            name="Meticulous",
             manufacturer="Meticulous",
             model="Espresso Machine",
+            configuration_url=f"http://{host}",
         )
 
     @property
@@ -239,7 +316,7 @@ class MeticulousInfoSensor(CoordinatorEntity[MeticulousDataUpdateCoordinator], S
         value = self.coordinator.data.get(self.entity_description.telemetry_key)
         if value is None:
             return None
-        if isinstance(value, (int, float, str)):
+        if isinstance(value, (int, float, str, datetime)):
             return value
         return str(value)
 
